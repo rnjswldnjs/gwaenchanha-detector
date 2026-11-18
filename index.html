@@ -22,34 +22,28 @@
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 18px; }
   .label { font-size: 12px; font-weight: 700; color: var(--sub); margin-bottom: 10px; }
 
-  .start {
+  .rec {
     width: 100%; border: 0; background: var(--ink); color: #fff; font: inherit;
-    font-size: 17px; font-weight: 700; padding: 16px; border-radius: 14px; cursor: pointer;
+    font-size: 17px; font-weight: 700; padding: 18px; border-radius: 14px; cursor: pointer;
   }
-  .start.stop { background: #fff; color: var(--ink); border: 1px solid var(--line); }
-  .start:disabled { opacity: .5; cursor: default; }
-  .status { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--sub); margin-top: 12px; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: #c4c1ba; flex-shrink: 0; }
-  .dot.live { background: var(--real); animation: pulse 1.2s infinite; }
-  .dot.hear { background: #e8a33d; }
-  .dot.err { background: var(--fake); }
-  @keyframes pulse { 50% { opacity: .3; } }
+  .rec:disabled { opacity: .55; cursor: default; }
+  .progress { height: 6px; background: var(--track); border-radius: 4px; overflow: hidden; margin-top: 14px; }
+  .progress div { height: 100%; width: 0; background: #e8a33d; border-radius: 4px; }
+  .status { font-size: 14px; color: var(--sub); margin-top: 10px; min-height: 20px; }
+  .status.err { color: var(--fake); }
 
   .result { text-align: center; padding: 34px 18px 30px; transition: background .2s; }
   .result.real { background: var(--real-soft); border-color: #c5e6d3; }
   .result.fake { background: var(--fake-soft); border-color: #f3c2be; }
   .verdict { font-size: 34px; font-weight: 800; letter-spacing: -0.6px; }
-  .verdict.idle { color: #b5b2ab; font-size: 22px; }
+  .verdict.idle { color: #b5b2ab; font-size: 21px; }
   .verdict.real { color: var(--real); }
   .verdict.fake { color: var(--fake); }
   .pct { font-size: 16px; color: var(--sub); margin-top: 8px; min-height: 22px; }
-
-  .bars .row { display: flex; align-items: center; gap: 10px; font-size: 13px; margin: 7px 0; }
-  .bars .row span { width: 84px; color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .bars .track { flex: 1; height: 10px; background: var(--track); border-radius: 6px; overflow: hidden; }
-  .bars .fill { height: 100%; width: 0; border-radius: 6px; transition: width .15s; }
-  .bars .num { width: 38px; text-align: right; font-variant-numeric: tabular-nums; color: var(--sub); }
-  .bars .hint { font-size: 13px; color: #b5b2ab; }
+  .split { display: flex; height: 10px; border-radius: 6px; overflow: hidden; margin: 18px auto 0; max-width: 280px; background: var(--track); }
+  .split .r { background: var(--real); }
+  .split .f { background: var(--fake); }
+  .split-legend { display: flex; justify-content: space-between; max-width: 280px; margin: 6px auto 0; font-size: 12px; color: var(--sub); }
 
   .history { display: flex; gap: 6px; flex-wrap: wrap; min-height: 26px; }
   .history .empty { font-size: 13px; color: #b5b2ab; }
@@ -65,22 +59,19 @@
 <div class="wrap">
   <header>
     <h1>괜찮아 판독기</h1>
-    <p>"괜찮아"가 진짜인지 가짜인지 목소리 톤으로 판별해요.</p>
+    <p>버튼을 누르고 2초 안에 "괜찮아"라고 말하면, 진짜인지 가짜인지 판별해요.</p>
   </header>
 
   <div class="card">
-    <button class="start" id="startBtn">마이크 켜고 판독 시작</button>
-    <div class="status"><div class="dot" id="dot"></div><span id="statusText">시작 버튼을 눌러주세요</span></div>
+    <button class="rec" id="recBtn">누르고 "괜찮아" 말하기</button>
+    <div class="progress"><div id="bar"></div></div>
+    <div class="status" id="status">처음 누를 때 마이크 권한을 허용해주세요</div>
   </div>
 
   <div class="card result" id="resultCard">
-    <div class="verdict idle" id="verdict">"괜찮아"를 기다리는 중</div>
+    <div class="verdict idle" id="verdict">아직 판독 전</div>
     <div class="pct" id="pct"></div>
-  </div>
-
-  <div class="card">
-    <div class="label">실시간 확률</div>
-    <div class="bars" id="bars"><span class="hint">판독을 시작하면 표시돼요</span></div>
+    <div id="splitBox"></div>
   </div>
 
   <div class="card">
@@ -103,157 +94,123 @@ const DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle.com/models/hm7RJY
 const params = new URLSearchParams(location.search);
 const MODEL_URL = (params.get("model") || DEFAULT_MODEL_URL).replace(/\/?$/, "/");
 
-// ===== 2. 판정 로직 설정 =====
+// ===== 2. 판정 설정 =====
 const CFG = {
-  triggerProb: 0.6,    // 진짜+가짜 확률 합이 이 이상이면 "괜찮아"가 들린 것으로 봄
-  captureMs: 1500,     // 들린 순간부터 이 시간 동안 들어온 판정을 모두 모아 평균 냄 (늘어지는 끝음까지 포함)
-  cooldownMs: 1500,    // 판정 직후 이 시간 동안은 새 판정을 하지 않음 (같은 말 중복 판정 방지)
-  fakeThreshold: 0.4   // 가짜 비중이 이 이상이면 가짜로 판정 (0.5보다 낮춰서 가짜를 놓치는 쪽을 줄임)
+  recordMs: 2000,      // 버튼을 누른 뒤 듣는 시간
+  speechMin: 0.3,      // 진짜+가짜 확률 합이 이 이상인 순간만 "말소리"로 보고 판정에 씀
+  fakeThreshold: 0.5   // 가짜 비중이 이 이상이면 가짜 (가짜를 더 잘 잡고 싶으면 0.4처럼 낮춤)
 };
 
 // ===== 3. 상태 =====
 let recognizer = null;
-let labels = [];
-let idx = { bg: -1, real: -1, fake: -1 };
-let state = "idle";          // idle → listening → capturing → cooldown → listening ...
-let captureStart = 0;
-let cooldownUntil = 0;
-let best = null;
+let idx = { real: -1, fake: -1 };
+let busy = false;
 const history = [];
 
 const $ = id => document.getElementById(id);
 $("modelLink").href = MODEL_URL;
 
-// ===== 4. 화면 =====
-function setStatus(text, dotClass) {
-  $("statusText").textContent = text;
-  $("dot").className = "dot" + (dotClass ? " " + dotClass : "");
+function setStatus(text, isErr) {
+  $("status").textContent = text;
+  $("status").className = "status" + (isErr ? " err" : "");
 }
 
-function buildBars() {
-  const colors = {};
-  colors[idx.bg] = "#c4c1ba";
-  colors[idx.real] = "var(--real)";
-  colors[idx.fake] = "var(--fake)";
-  $("bars").innerHTML = labels.map((name, i) => `
-    <div class="row">
-      <span title="${name}">${name}</span>
-      <div class="track"><div class="fill" id="fill${i}" style="background:${colors[i] || "#999"}"></div></div>
-      <div class="num" id="num${i}">0%</div>
-    </div>`).join("");
+async function loadModel() {
+  setStatus("모델 불러오는 중...");
+  recognizer = speechCommands.create("BROWSER_FFT", undefined, MODEL_URL + "model.json", MODEL_URL + "metadata.json");
+  await recognizer.ensureModelLoaded();
+  const labels = recognizer.wordLabels();
+  idx.real = labels.findIndex(l => l.includes("진짜"));
+  idx.fake = labels.findIndex(l => l.includes("가짜"));
+  if (idx.real < 0 || idx.fake < 0) {
+    throw new Error("클래스 이름에 '진짜'와 '가짜'가 들어가야 해요. 현재: " + labels.join(", "));
+  }
 }
 
-function updateBars(scores) {
-  scores.forEach((s, i) => {
-    const pct = Math.round(s * 100);
-    const fill = $("fill" + i);
-    if (fill) fill.style.width = pct + "%";
-    const num = $("num" + i);
-    if (num) num.textContent = pct + "%";
-  });
+// ===== 4. 2초 녹음 → 자동 정지 → 판정 =====
+async function recordOnce() {
+  if (busy) return;
+  busy = true;
+  const btn = $("recBtn");
+  btn.disabled = true;
+
+  try {
+    if (!recognizer) await loadModel();
+
+    let sumReal = 0, sumFake = 0, heard = 0;
+
+    await recognizer.listen(result => {
+      const s = result.scores;
+      const pReal = s[idx.real], pFake = s[idx.fake];
+      if (pReal + pFake >= CFG.speechMin) {   // 말소리가 있는 순간만 모음
+        sumReal += pReal;
+        sumFake += pFake;
+        heard++;
+      }
+    }, {
+      includeSpectrogram: false,
+      probabilityThreshold: 0,
+      invokeCallbackOnNoiseAndUnknown: true,
+      overlapFactor: 0.75
+    });
+
+    // 진행 막대 + 남은 시간 표시
+    const t0 = performance.now();
+    await new Promise(resolve => {
+      const tick = () => {
+        const p = Math.min((performance.now() - t0) / CFG.recordMs, 1);
+        $("bar").style.width = (p * 100) + "%";
+        setStatus(`듣는 중... ${((1 - p) * CFG.recordMs / 1000).toFixed(1)}초`);
+        if (p < 1) requestAnimationFrame(tick); else resolve();
+      };
+      tick();
+    });
+
+    await recognizer.stopListening();
+    $("bar").style.width = "0%";
+
+    if (heard === 0) {
+      setStatus("잘 안 들렸어요. 조금 더 크게 다시 말해주세요", true);
+    } else {
+      showResult(sumReal, sumFake);
+      setStatus("판독 완료. 다시 하려면 버튼을 누르세요");
+    }
+  } catch (e) {
+    console.error(e);
+    if (recognizer && recognizer.isListening()) await recognizer.stopListening();
+    $("bar").style.width = "0%";
+    setStatus("오류: " + (e.message || e), true);
+  }
+
+  btn.disabled = false;
+  busy = false;
 }
 
-function showResult(isFake, conf) {
+// ===== 5. 결과 화면 =====
+function showResult(sumReal, sumFake) {
+  const fakeRatio = sumFake / (sumReal + sumFake);
+  const isFake = fakeRatio >= CFG.fakeThreshold;
+  const conf = isFake ? fakeRatio : 1 - fakeRatio;
+
   const v = $("verdict");
   v.textContent = isFake ? "가짜 괜찮아" : "진짜 괜찮아";
   v.className = "verdict " + (isFake ? "fake" : "real");
   $("resultCard").className = "card result " + (isFake ? "fake" : "real");
   $("pct").textContent = `확률 ${Math.round(conf * 100)}%`;
 
+  const r = Math.round((1 - fakeRatio) * 100), f = 100 - r;
+  $("splitBox").innerHTML = `
+    <div class="split"><div class="r" style="width:${r}%"></div><div class="f" style="width:${f}%"></div></div>
+    <div class="split-legend"><span>진짜 ${r}%</span><span>가짜 ${f}%</span></div>`;
+
   history.unshift(isFake);
   if (history.length > 10) history.pop();
-  $("history").innerHTML = history.map(f =>
-    `<span class="chip ${f ? "fake" : "real"}">${f ? "가짜" : "진짜"}</span>`
+  $("history").innerHTML = history.map(x =>
+    `<span class="chip ${x ? "fake" : "real"}">${x ? "가짜" : "진짜"}</span>`
   ).join("");
 }
 
-// ===== 5. 판정 =====
-// 모은 프레임 전체의 진짜·가짜 확률 합으로 판정 (한 프레임만 보면 말 첫머리에 휘둘림)
-function decide(b) {
-  const fakeRatio = b.fake / (b.real + b.fake);   // 진짜·가짜 둘 중 가짜 비중
-  const isFake = fakeRatio >= CFG.fakeThreshold;
-  showResult(isFake, isFake ? fakeRatio : 1 - fakeRatio);
-}
-
-// 상태가 바뀔 때만 판정: 매 프레임마다 판정하지 않음
-function onFrame(result) {
-  const s = Array.from(result.scores);
-  updateBars(s);
-
-  const pReal = s[idx.real], pFake = s[idx.fake];
-  const speech = pReal + pFake;
-  const now = performance.now();
-
-  if (state === "listening") {
-    if (speech >= CFG.triggerProb) {
-      state = "capturing";
-      captureStart = now;
-      best = { real: pReal, fake: pFake };
-      setStatus("듣는 중...", "hear");
-    }
-  } else if (state === "capturing") {
-    best.real += pReal;
-    best.fake += pFake;
-    if (now - captureStart >= CFG.captureMs) {
-      decide(best);
-      state = "cooldown";
-      cooldownUntil = now + CFG.cooldownMs;
-      setStatus("판독 완료", "live");
-    }
-  } else if (state === "cooldown") {
-    if (now >= cooldownUntil) {
-      state = "listening";
-      setStatus("\"괜찮아\"를 기다리는 중", "live");
-    }
-  }
-}
-
-// ===== 6. 시작/정지 =====
-async function start() {
-  const btn = $("startBtn");
-  btn.disabled = true;
-  try {
-    if (!recognizer) {
-      setStatus("모델 불러오는 중...", "");
-      recognizer = speechCommands.create("BROWSER_FFT", undefined, MODEL_URL + "model.json", MODEL_URL + "metadata.json");
-      await recognizer.ensureModelLoaded();
-      labels = recognizer.wordLabels();
-      idx.real = labels.findIndex(l => l.includes("진짜"));
-      idx.fake = labels.findIndex(l => l.includes("가짜"));
-      idx.bg = labels.findIndex((l, i) => i !== idx.real && i !== idx.fake);
-      if (idx.real < 0 || idx.fake < 0) {
-        throw new Error("클래스 이름에 '진짜'와 '가짜'가 들어가야 해요. 현재: " + labels.join(", "));
-      }
-      buildBars();
-    }
-    await recognizer.listen(onFrame, {
-      includeSpectrogram: false,
-      probabilityThreshold: 0,
-      invokeCallbackOnNoiseAndUnknown: true,
-      overlapFactor: 0.5
-    });
-    state = "listening";
-    setStatus("\"괜찮아\"를 기다리는 중", "live");
-    btn.textContent = "판독 멈추기";
-    btn.classList.add("stop");
-  } catch (e) {
-    console.error(e);
-    recognizer = null;
-    setStatus("오류: " + (e.message || e), "err");
-  }
-  btn.disabled = false;
-}
-
-async function stop() {
-  if (recognizer && recognizer.isListening()) await recognizer.stopListening();
-  state = "idle";
-  setStatus("멈춤", "");
-  const btn = $("startBtn");
-  btn.textContent = "마이크 켜고 판독 시작";
-  btn.classList.remove("stop");
-}
-
-$("startBtn").addEventListener("click", () => (state === "idle" ? start() : stop()));
+$("recBtn").addEventListener("click", recordOnce);
 </script>
 </body>
 </html>
