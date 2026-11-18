@@ -105,9 +105,10 @@ const MODEL_URL = (params.get("model") || DEFAULT_MODEL_URL).replace(/\/?$/, "/"
 
 // ===== 2. 판정 로직 설정 =====
 const CFG = {
-  triggerProb: 0.6,  // 진짜+가짜 확률 합이 이 이상이면 "괜찮아"가 들린 것으로 봄
-  captureMs: 1200,   // 들린 순간부터 이 시간 동안 들어온 판정 중 가장 확실한 것을 씀
-  cooldownMs: 1500   // 판정 직후 이 시간 동안은 새 판정을 하지 않음 (같은 말 중복 판정 방지)
+  triggerProb: 0.6,    // 진짜+가짜 확률 합이 이 이상이면 "괜찮아"가 들린 것으로 봄
+  captureMs: 1500,     // 들린 순간부터 이 시간 동안 들어온 판정을 모두 모아 평균 냄 (늘어지는 끝음까지 포함)
+  cooldownMs: 1500,    // 판정 직후 이 시간 동안은 새 판정을 하지 않음 (같은 말 중복 판정 방지)
+  fakeThreshold: 0.4   // 가짜 비중이 이 이상이면 가짜로 판정 (0.5보다 낮춰서 가짜를 놓치는 쪽을 줄임)
 };
 
 // ===== 3. 상태 =====
@@ -167,9 +168,10 @@ function showResult(isFake, conf) {
 }
 
 // ===== 5. 판정 =====
+// 모은 프레임 전체의 진짜·가짜 확률 합으로 판정 (한 프레임만 보면 말 첫머리에 휘둘림)
 function decide(b) {
   const fakeRatio = b.fake / (b.real + b.fake);   // 진짜·가짜 둘 중 가짜 비중
-  const isFake = fakeRatio >= 0.5;
+  const isFake = fakeRatio >= CFG.fakeThreshold;
   showResult(isFake, isFake ? fakeRatio : 1 - fakeRatio);
 }
 
@@ -186,11 +188,12 @@ function onFrame(result) {
     if (speech >= CFG.triggerProb) {
       state = "capturing";
       captureStart = now;
-      best = { real: pReal, fake: pFake, speech };
+      best = { real: pReal, fake: pFake };
       setStatus("듣는 중...", "hear");
     }
   } else if (state === "capturing") {
-    if (speech > best.speech) best = { real: pReal, fake: pFake, speech };
+    best.real += pReal;
+    best.fake += pFake;
     if (now - captureStart >= CFG.captureMs) {
       decide(best);
       state = "cooldown";
