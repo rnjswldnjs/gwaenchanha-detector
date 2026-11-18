@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>괜찮아 판독기</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<style>
+  :root {
+    --bg: #f6f5f2; --card: #ffffff; --ink: #1d1d1f; --sub: #6e6e73; --line: #e5e3de;
+    --real: #2f9e6b; --real-soft: #e6f4ec; --fake: #d6453d; --fake-soft: #fbe9e7; --track: #f0eeea;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: Pretendard, -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg); color: var(--ink); min-height: 100vh;
+    display: flex; justify-content: center; padding: 28px 16px 40px;
+  }
+  .wrap { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 14px; }
+  header h1 { font-size: 27px; font-weight: 800; letter-spacing: -0.6px; }
+  header p { color: var(--sub); font-size: 14px; margin-top: 4px; line-height: 1.5; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 18px; }
+  .label { font-size: 12px; font-weight: 700; color: var(--sub); margin-bottom: 10px; }
+
+  .start {
+    width: 100%; border: 0; background: var(--ink); color: #fff; font: inherit;
+    font-size: 17px; font-weight: 700; padding: 16px; border-radius: 14px; cursor: pointer;
+  }
+  .start.stop { background: #fff; color: var(--ink); border: 1px solid var(--line); }
+  .start:disabled { opacity: .5; cursor: default; }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--sub); margin-top: 12px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #c4c1ba; flex-shrink: 0; }
+  .dot.live { background: var(--real); animation: pulse 1.2s infinite; }
+  .dot.hear { background: #e8a33d; }
+  .dot.err { background: var(--fake); }
+  @keyframes pulse { 50% { opacity: .3; } }
+
+  .result { text-align: center; padding: 34px 18px 30px; transition: background .2s; }
+  .result.real { background: var(--real-soft); border-color: #c5e6d3; }
+  .result.fake { background: var(--fake-soft); border-color: #f3c2be; }
+  .verdict { font-size: 34px; font-weight: 800; letter-spacing: -0.6px; }
+  .verdict.idle { color: #b5b2ab; font-size: 22px; }
+  .verdict.real { color: var(--real); }
+  .verdict.fake { color: var(--fake); }
+  .pct { font-size: 16px; color: var(--sub); margin-top: 8px; min-height: 22px; }
+
+  .bars .row { display: flex; align-items: center; gap: 10px; font-size: 13px; margin: 7px 0; }
+  .bars .row span { width: 84px; color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bars .track { flex: 1; height: 10px; background: var(--track); border-radius: 6px; overflow: hidden; }
+  .bars .fill { height: 100%; width: 0; border-radius: 6px; transition: width .15s; }
+  .bars .num { width: 38px; text-align: right; font-variant-numeric: tabular-nums; color: var(--sub); }
+  .bars .hint { font-size: 13px; color: #b5b2ab; }
+
+  .history { display: flex; gap: 6px; flex-wrap: wrap; min-height: 26px; }
+  .history .empty { font-size: 13px; color: #b5b2ab; }
+  .chip { font-size: 12px; font-weight: 700; padding: 5px 10px; border-radius: 20px; }
+  .chip.real { background: var(--real-soft); color: var(--real); }
+  .chip.fake { background: var(--fake-soft); color: var(--fake); }
+
+  footer { font-size: 12px; color: var(--sub); text-align: center; line-height: 1.7; margin-top: 6px; }
+  footer a { color: var(--sub); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>괜찮아 판독기</h1>
+    <p>"괜찮아"가 진짜인지 가짜인지 목소리 톤으로 판별해요.</p>
+  </header>
+
+  <div class="card">
+    <button class="start" id="startBtn">마이크 켜고 판독 시작</button>
+    <div class="status"><div class="dot" id="dot"></div><span id="statusText">시작 버튼을 눌러주세요</span></div>
+  </div>
+
+  <div class="card result" id="resultCard">
+    <div class="verdict idle" id="verdict">"괜찮아"를 기다리는 중</div>
+    <div class="pct" id="pct"></div>
+  </div>
+
+  <div class="card">
+    <div class="label">실시간 확률</div>
+    <div class="bars" id="bars"><span class="hint">판독을 시작하면 표시돼요</span></div>
+  </div>
+
+  <div class="card">
+    <div class="label">최근 판독</div>
+    <div class="history" id="history"><span class="empty">아직 없음</span></div>
+  </div>
+
+  <footer>
+    모든 판독은 이 브라우저 안에서만 이루어지고, 목소리는 저장되지 않아요.<br>
+    모델: <a id="modelLink" href="#" target="_blank" rel="noopener">Teachable Machine</a>
+  </footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.4.0/dist/speech-commands.min.js"></script>
+<script>
+// ===== 1. 모델 링크 (주소 뒤에 ?model=링크 를 붙이면 다른 모델로 바꿔서 테스트 가능) =====
+const DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle.com/models/hm7RJYJKV/";
+
+const params = new URLSearchParams(location.search);
+const MODEL_URL = (params.get("model") || DEFAULT_MODEL_URL).replace(/\/?$/, "/");
+
+// ===== 2. 판정 로직 설정 =====
+const CFG = {
+  triggerProb: 0.6,  // 진짜+가짜 확률 합이 이 이상이면 "괜찮아"가 들린 것으로 봄
+  captureMs: 1200,   // 들린 순간부터 이 시간 동안 들어온 판정 중 가장 확실한 것을 씀
+  cooldownMs: 1500   // 판정 직후 이 시간 동안은 새 판정을 하지 않음 (같은 말 중복 판정 방지)
+};
+
+// ===== 3. 상태 =====
+let recognizer = null;
+let labels = [];
+let idx = { bg: -1, real: -1, fake: -1 };
+let state = "idle";          // idle → listening → capturing → cooldown → listening ...
+let captureStart = 0;
+let cooldownUntil = 0;
+let best = null;
+const history = [];
+
+const $ = id => document.getElementById(id);
+$("modelLink").href = MODEL_URL;
+
+// ===== 4. 화면 =====
+function setStatus(text, dotClass) {
+  $("statusText").textContent = text;
+  $("dot").className = "dot" + (dotClass ? " " + dotClass : "");
+}
+
+function buildBars() {
+  const colors = {};
+  colors[idx.bg] = "#c4c1ba";
+  colors[idx.real] = "var(--real)";
+  colors[idx.fake] = "var(--fake)";
+  $("bars").innerHTML = labels.map((name, i) => `
+    <div class="row">
+      <span title="${name}">${name}</span>
+      <div class="track"><div class="fill" id="fill${i}" style="background:${colors[i] || "#999"}"></div></div>
+      <div class="num" id="num${i}">0%</div>
+    </div>`).join("");
+}
+
+function updateBars(scores) {
+  scores.forEach((s, i) => {
+    const pct = Math.round(s * 100);
+    const fill = $("fill" + i);
+    if (fill) fill.style.width = pct + "%";
+    const num = $("num" + i);
+    if (num) num.textContent = pct + "%";
+  });
+}
+
+function showResult(isFake, conf) {
+  const v = $("verdict");
+  v.textContent = isFake ? "가짜 괜찮아" : "진짜 괜찮아";
+  v.className = "verdict " + (isFake ? "fake" : "real");
+  $("resultCard").className = "card result " + (isFake ? "fake" : "real");
+  $("pct").textContent = `확률 ${Math.round(conf * 100)}%`;
+
+  history.unshift(isFake);
+  if (history.length > 10) history.pop();
+  $("history").innerHTML = history.map(f =>
+    `<span class="chip ${f ? "fake" : "real"}">${f ? "가짜" : "진짜"}</span>`
+  ).join("");
+}
+
+// ===== 5. 판정 =====
+function decide(b) {
+  const fakeRatio = b.fake / (b.real + b.fake);   // 진짜·가짜 둘 중 가짜 비중
+  const isFake = fakeRatio >= 0.5;
+  showResult(isFake, isFake ? fakeRatio : 1 - fakeRatio);
+}
+
+// 상태가 바뀔 때만 판정: 매 프레임마다 판정하지 않음
+function onFrame(result) {
+  const s = Array.from(result.scores);
+  updateBars(s);
+
+  const pReal = s[idx.real], pFake = s[idx.fake];
+  const speech = pReal + pFake;
+  const now = performance.now();
+
+  if (state === "listening") {
+    if (speech >= CFG.triggerProb) {
+      state = "capturing";
+      captureStart = now;
+      best = { real: pReal, fake: pFake, speech };
+      setStatus("듣는 중...", "hear");
+    }
+  } else if (state === "capturing") {
+    if (speech > best.speech) best = { real: pReal, fake: pFake, speech };
+    if (now - captureStart >= CFG.captureMs) {
+      decide(best);
+      state = "cooldown";
+      cooldownUntil = now + CFG.cooldownMs;
+      setStatus("판독 완료", "live");
+    }
+  } else if (state === "cooldown") {
+    if (now >= cooldownUntil) {
+      state = "listening";
+      setStatus("\"괜찮아\"를 기다리는 중", "live");
+    }
+  }
+}
+
+// ===== 6. 시작/정지 =====
+async function start() {
+  const btn = $("startBtn");
+  btn.disabled = true;
+  try {
+    if (!recognizer) {
+      setStatus("모델 불러오는 중...", "");
+      recognizer = speechCommands.create("BROWSER_FFT", undefined, MODEL_URL + "model.json", MODEL_URL + "metadata.json");
+      await recognizer.ensureModelLoaded();
+      labels = recognizer.wordLabels();
+      idx.real = labels.findIndex(l => l.includes("진짜"));
+      idx.fake = labels.findIndex(l => l.includes("가짜"));
+      idx.bg = labels.findIndex((l, i) => i !== idx.real && i !== idx.fake);
+      if (idx.real < 0 || idx.fake < 0) {
+        throw new Error("클래스 이름에 '진짜'와 '가짜'가 들어가야 해요. 현재: " + labels.join(", "));
+      }
+      buildBars();
+    }
+    await recognizer.listen(onFrame, {
+      includeSpectrogram: false,
+      probabilityThreshold: 0,
+      invokeCallbackOnNoiseAndUnknown: true,
+      overlapFactor: 0.5
+    });
+    state = "listening";
+    setStatus("\"괜찮아\"를 기다리는 중", "live");
+    btn.textContent = "판독 멈추기";
+    btn.classList.add("stop");
+  } catch (e) {
+    console.error(e);
+    recognizer = null;
+    setStatus("오류: " + (e.message || e), "err");
+  }
+  btn.disabled = false;
+}
+
+async function stop() {
+  if (recognizer && recognizer.isListening()) await recognizer.stopListening();
+  state = "idle";
+  setStatus("멈춤", "");
+  const btn = $("startBtn");
+  btn.textContent = "마이크 켜고 판독 시작";
+  btn.classList.remove("stop");
+}
+
+$("startBtn").addEventListener("click", () => (state === "idle" ? start() : stop()));
+</script>
+</body>
+</html>
